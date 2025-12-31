@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""
+PySide6 GUI for Pi ultrasonic REST service
+Shows 1 / 0  +  two buttons to enable / disable the sensor
+"""
+
+import sys
+import httpx
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton
+)
+
+# ---------- change to your Pi ----------
+BASE_URL = "http://172.20.10.3:8000"
+
+class PiWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Pi Ultrasonic 1/0")
+        self.resize(300, 150)
+
+        # widgets
+        self.label = QLabel("–", self)
+        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setStyleSheet("font-size:40px;")
+        self.btn_on  = QPushButton("Enable  (1)")
+        self.btn_off = QPushButton("Disable (0)")
+
+        # layouts
+        vbox = QVBoxLayout(self)
+        vbox.addWidget(self.label)
+        hbox = QHBoxLayout()
+        hbox.addWidget(self.btn_on)
+        hbox.addWidget(self.btn_off)
+        vbox.addLayout(hbox)
+
+        # auto-update timer
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.poll_distance)
+        self.timer.start(500)          # 2 Hz
+
+        # button actions
+        self.btn_on.clicked.connect(lambda: self.set_enabled(True))
+        self.btn_off.clicked.connect(lambda: self.set_enabled(False))
+
+        # first read
+        self.poll_distance()
+
+    # ---------- HTTP helpers ----------
+    async def _get(self, route):
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            resp = await client.get(f"{BASE_URL}{route}")
+            return resp.json() if resp.headers.get("content-type") == "application/json" else resp.text
+
+    async def _post(self, route, json_data):
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            resp = await client.post(f"{BASE_URL}{route}", json=json_data)
+            return resp.json()
+
+    # ---------- poll ----------
+    def poll_distance(self):
+        # run async call without blocking GUI
+        try:
+            value = httpx.get(f"{BASE_URL}/distance", timeout=1).text
+            self.label.setText(value.strip())
+            self.label.setStyleSheet("font-size:40px; color:green;")
+        except Exception as e:
+            self.label.setText("0")
+            self.label.setStyleSheet("font-size:40px; color:red;")
+            print("poll error", e)
+
+    # ---------- button ----------
+    def set_enabled(self, state: bool):
+        try:
+            httpx.post(f"{BASE_URL}/button", json={"state": int(state)}, timeout=1)
+            self.poll_distance()          # refresh immediately
+        except Exception as e:
+            print("button error", e)
+
+# ---------- run ----------
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    win = PiWindow()
+    win.show()
+    sys.exit(app.exec())
